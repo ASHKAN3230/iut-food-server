@@ -76,6 +76,14 @@ void HttpServer::handleRequest(QTcpSocket *socket)
     } else if (path.startsWith("/api/orders/") && method == "PUT") {
         QString orderId = path.split("/")[3];
         handleUpdateOrderStatus(socket, orderId, body);
+    } else if (path == "/api/menu" && method == "POST") {
+        handleAddMenuItem(socket, body);
+    } else if (path.startsWith("/api/menu/") && method == "PUT") {
+        QString menuItemId = path.split("/")[3];
+        handleUpdateMenuItem(socket, menuItemId, body);
+    } else if (path.startsWith("/api/menu/") && method == "DELETE") {
+        QString menuItemId = path.split("/")[3];
+        handleDeleteMenuItem(socket, menuItemId);
     } else {
         sendResponse(socket, 404, "text/plain", "404 Not Found");
     }
@@ -280,6 +288,92 @@ void HttpServer::handleUpdateOrderStatus(QTcpSocket *socket, const QString &orde
     } else {
         QJsonObject errorResponse;
         errorResponse["error"] = "Failed to update order status";
+        sendJsonResponse(socket, 500, errorResponse);
+    }
+}
+
+void HttpServer::handleAddMenuItem(QTcpSocket *socket, const QString &body)
+{
+    QJsonParseError error;
+    QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8(), &error);
+    
+    if (error.error != QJsonParseError::NoError) {
+        QJsonObject errorResponse;
+        errorResponse["error"] = "Invalid JSON";
+        sendJsonResponse(socket, 400, errorResponse);
+        return;
+    }
+    
+    QJsonObject request = doc.object();
+    QString restaurantId = request["restaurantId"].toString();
+    QString foodType = request["foodType"].toString();
+    QString foodName = request["foodName"].toString();
+    QString foodDetails = request["foodDetails"].toString();
+    int price = request["price"].toInt();
+    
+    if (restaurantId.isEmpty() || foodType.isEmpty() || foodName.isEmpty() || foodDetails.isEmpty() || price <= 0) {
+        QJsonObject errorResponse;
+        errorResponse["error"] = "All fields are required and price must be positive";
+        sendJsonResponse(socket, 400, errorResponse);
+        return;
+    }
+    
+    if (addMenuItem(restaurantId, foodType, foodName, foodDetails, price)) {
+        QJsonObject response;
+        response["message"] = "Menu item added successfully";
+        sendJsonResponse(socket, 201, response);
+    } else {
+        QJsonObject errorResponse;
+        errorResponse["error"] = "Failed to add menu item";
+        sendJsonResponse(socket, 500, errorResponse);
+    }
+}
+
+void HttpServer::handleUpdateMenuItem(QTcpSocket *socket, const QString &menuItemId, const QString &body)
+{
+    QJsonParseError error;
+    QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8(), &error);
+    
+    if (error.error != QJsonParseError::NoError) {
+        QJsonObject errorResponse;
+        errorResponse["error"] = "Invalid JSON";
+        sendJsonResponse(socket, 400, errorResponse);
+        return;
+    }
+    
+    QJsonObject request = doc.object();
+    QString foodType = request["foodType"].toString();
+    QString foodName = request["foodName"].toString();
+    QString foodDetails = request["foodDetails"].toString();
+    int price = request["price"].toInt();
+    
+    if (foodType.isEmpty() || foodName.isEmpty() || foodDetails.isEmpty() || price <= 0) {
+        QJsonObject errorResponse;
+        errorResponse["error"] = "All fields are required and price must be positive";
+        sendJsonResponse(socket, 400, errorResponse);
+        return;
+    }
+    
+    if (updateMenuItem(menuItemId, foodType, foodName, foodDetails, price)) {
+        QJsonObject response;
+        response["message"] = "Menu item updated successfully";
+        sendJsonResponse(socket, 200, response);
+    } else {
+        QJsonObject errorResponse;
+        errorResponse["error"] = "Failed to update menu item";
+        sendJsonResponse(socket, 500, errorResponse);
+    }
+}
+
+void HttpServer::handleDeleteMenuItem(QTcpSocket *socket, const QString &menuItemId)
+{
+    if (deleteMenuItem(menuItemId)) {
+        QJsonObject response;
+        response["message"] = "Menu item deleted successfully";
+        sendJsonResponse(socket, 200, response);
+    } else {
+        QJsonObject errorResponse;
+        errorResponse["error"] = "Failed to delete menu item";
         sendJsonResponse(socket, 500, errorResponse);
     }
 }
@@ -552,6 +646,41 @@ bool HttpServer::updateOrderStatus(const QString &orderId, const QString &status
     query.prepare("UPDATE orders SET order_status = ? WHERE id = ?");
     query.addBindValue(status);
     query.addBindValue(orderId.toInt());
+    
+    return query.exec();
+}
+
+bool HttpServer::addMenuItem(const QString &restaurantId, const QString &foodType, const QString &foodName, const QString &foodDetails, int price)
+{
+    QSqlQuery query;
+    query.prepare("INSERT INTO menu_items (restaurant_id, food_type, food_name, food_details, price) VALUES (?, ?, ?, ?, ?)");
+    query.addBindValue(restaurantId.toInt());
+    query.addBindValue(foodType);
+    query.addBindValue(foodName);
+    query.addBindValue(foodDetails);
+    query.addBindValue(price);
+    
+    return query.exec();
+}
+
+bool HttpServer::updateMenuItem(const QString &menuItemId, const QString &foodType, const QString &foodName, const QString &foodDetails, int price)
+{
+    QSqlQuery query;
+    query.prepare("UPDATE menu_items SET food_type = ?, food_name = ?, food_details = ?, price = ? WHERE id = ?");
+    query.addBindValue(foodType);
+    query.addBindValue(foodName);
+    query.addBindValue(foodDetails);
+    query.addBindValue(price);
+    query.addBindValue(menuItemId.toInt());
+    
+    return query.exec();
+}
+
+bool HttpServer::deleteMenuItem(const QString &menuItemId)
+{
+    QSqlQuery query;
+    query.prepare("DELETE FROM menu_items WHERE id = ?");
+    query.addBindValue(menuItemId.toInt());
     
     return query.exec();
 } 

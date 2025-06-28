@@ -15,7 +15,7 @@ SOURCES += \
     httpserver.cpp
 
 HEADERS += \
-    httpserver.h
+    httpserver.h \
     # ... headers will be added as files are created
 
 # Default rules for deployment.

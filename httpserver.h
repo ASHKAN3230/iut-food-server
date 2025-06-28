@@ -38,6 +38,9 @@ private:
     void handleCreateOrder(QTcpSocket *socket, const QString &body);
     void handleGetOrders(QTcpSocket *socket, const QString &userId);
     void handleUpdateOrderStatus(QTcpSocket *socket, const QString &orderId, const QString &body);
+    void handleAddMenuItem(QTcpSocket *socket, const QString &body);
+    void handleUpdateMenuItem(QTcpSocket *socket, const QString &menuItemId, const QString &body);
+    void handleDeleteMenuItem(QTcpSocket *socket, const QString &menuItemId);
     
     // Database helpers
     bool initializeDatabase();
@@ -48,6 +51,9 @@ private:
     bool createOrder(const QString &customerId, const QString &restaurantId, const QJsonArray &items, int totalAmount);
     QJsonArray getOrders(const QString &userId, const QString &userType);
     bool updateOrderStatus(const QString &orderId, const QString &status);
+    bool addMenuItem(const QString &restaurantId, const QString &foodType, const QString &foodName, const QString &foodDetails, int price);
+    bool updateMenuItem(const QString &menuItemId, const QString &foodType, const QString &foodName, const QString &foodDetails, int price);
+    bool deleteMenuItem(const QString &menuItemId);
 };
 
 #endif // HTTPSERVER_H 
