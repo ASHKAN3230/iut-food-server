@@ -34,6 +34,8 @@ void HttpServer::handleRequest(QTcpSocket *socket)
     QString requestStr = QString::fromUtf8(request);
     
     qInfo() << "Received request:" << requestStr.split("\r\n").first();
+    // Log the full request for debugging
+    qInfo() << "Full HTTP request:\n" << requestStr;
     
     // Parse HTTP request
     QStringList lines = requestStr.split("\r\n");
@@ -77,6 +79,7 @@ void HttpServer::handleRequest(QTcpSocket *socket)
         QString orderId = path.split("/")[3];
         handleUpdateOrderStatus(socket, orderId, body);
     } else if (path == "/api/menu" && method == "POST") {
+        qInfo() << "[DEBUG] /api/menu POST body:" << body;
         handleAddMenuItem(socket, body);
     } else if (path.startsWith("/api/menu/") && method == "PUT") {
         QString menuItemId = path.split("/")[3];
@@ -301,6 +304,7 @@ void HttpServer::handleAddMenuItem(QTcpSocket *socket, const QString &body)
         QJsonObject errorResponse;
         errorResponse["error"] = "Invalid JSON";
         sendJsonResponse(socket, 400, errorResponse);
+        qWarning() << "[DEBUG] Invalid JSON received in /api/menu POST:" << body;
         return;
     }
     
@@ -310,6 +314,12 @@ void HttpServer::handleAddMenuItem(QTcpSocket *socket, const QString &body)
     QString foodName = request["foodName"].toString();
     QString foodDetails = request["foodDetails"].toString();
     int price = request["price"].toInt();
+    qInfo() << "[DEBUG] Parsed fields:";
+    qInfo() << "  restaurantId:" << restaurantId;
+    qInfo() << "  foodType:" << foodType;
+    qInfo() << "  foodName:" << foodName;
+    qInfo() << "  foodDetails:" << foodDetails;
+    qInfo() << "  price:" << price;
     
     if (restaurantId.isEmpty() || foodType.isEmpty() || foodName.isEmpty() || foodDetails.isEmpty() || price <= 0) {
         QJsonObject errorResponse;
