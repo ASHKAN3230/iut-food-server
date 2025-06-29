@@ -87,6 +87,19 @@ void HttpServer::handleRequest(QTcpSocket *socket)
     } else if (path.startsWith("/api/menu/") && method == "DELETE") {
         QString menuItemId = path.split("/")[3];
         handleDeleteMenuItem(socket, menuItemId);
+    } else if (path == "/api/users/set-restaurant" && method == "POST") {
+        handleSetUserRestaurant(socket, body);
+    } else if (path == "/api/restaurants/create" && method == "POST") {
+        handleCreateRestaurant(socket, body);
+    } else if (path.startsWith("/api/users/") && method == "GET") {
+        // /api/users/{id}
+        QStringList pathParts = path.split("/");
+        if (pathParts.size() >= 4) {
+            QString userId = pathParts[3];
+            handleGetUserInfo(socket, userId);
+        } else {
+            sendJsonResponse(socket, 400, QJsonObject{{"error", "Missing user id"}});
+        }
     } else {
         sendResponse(socket, 404, "text/plain", "404 Not Found");
     }
@@ -197,14 +210,57 @@ void HttpServer::handleUserRegister(QTcpSocket *socket, const QString &body)
         return;
     }
     
-    if (registerUser(username, password, userType)) {
-        QJsonObject response;
-        response["message"] = "User registered successfully";
-        sendJsonResponse(socket, 201, response);
+    QSqlQuery query;
+    if (userType == "restaurant") {
+        // Insert user first
+        query.prepare("INSERT INTO users (username, password, user_type) VALUES (?, ?, ?)");
+        query.addBindValue(username);
+        query.addBindValue(password);
+        query.addBindValue(userType);
+        if (!query.exec()) {
+            sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to register user"}});
+            return;
+        }
+        int userId = query.lastInsertId().toInt();
+        // Insert restaurant with id = userId
+        QSqlQuery restQuery;
+        restQuery.prepare("INSERT INTO restaurants (id, name, type, location, description, min_price, max_price) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        restQuery.addBindValue(userId);
+        restQuery.addBindValue("New Restaurant");
+        restQuery.addBindValue("Unknown");
+        restQuery.addBindValue("Unknown");
+        restQuery.addBindValue("");
+        restQuery.addBindValue(0);
+        restQuery.addBindValue(0);
+        if (!restQuery.exec()) {
+            // Rollback user if restaurant insert fails
+            QSqlQuery delUser;
+            delUser.prepare("DELETE FROM users WHERE id = ?");
+            delUser.addBindValue(userId);
+            delUser.exec();
+            sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to create restaurant"}});
+            return;
+        }
+        // Update user's restaurant_id
+        QSqlQuery updateUser;
+        updateUser.prepare("UPDATE users SET restaurant_id = ? WHERE id = ?");
+        updateUser.addBindValue(userId);
+        updateUser.addBindValue(userId);
+        if (!updateUser.exec()) {
+            sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to update user restaurant_id"}});
+            return;
+        }
+        sendJsonResponse(socket, 200, QJsonObject{{"message", "User registered successfully"}});
     } else {
-        QJsonObject errorResponse;
-        errorResponse["error"] = "Failed to register user";
-        sendJsonResponse(socket, 500, errorResponse);
+        query.prepare("INSERT INTO users (username, password, user_type) VALUES (?, ?, ?)");
+        query.addBindValue(username);
+        query.addBindValue(password);
+        query.addBindValue(userType);
+        if (!query.exec()) {
+            sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to register user"}});
+            return;
+        }
+        sendJsonResponse(socket, 201, QJsonObject{{"message", "User registered successfully"}});
     }
 }
 
@@ -388,6 +444,93 @@ void HttpServer::handleDeleteMenuItem(QTcpSocket *socket, const QString &menuIte
     }
 }
 
+void HttpServer::handleSetUserRestaurant(QTcpSocket *socket, const QString &body) {
+    QJsonParseError error;
+    QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError) {
+        QJsonObject errorResponse;
+        errorResponse["error"] = "Invalid JSON";
+        sendJsonResponse(socket, 400, errorResponse);
+        return;
+    }
+    QJsonObject req = doc.object();
+    int userId = req["userId"].toInt();
+    int restaurantId = req["restaurantId"].toInt();
+    qInfo() << "[DEBUG] handleSetUserRestaurant: userId=" << userId << "restaurantId=" << restaurantId;
+    QSqlQuery query;
+    query.prepare("UPDATE users SET restaurant_id = ? WHERE id = ?");
+    query.addBindValue(restaurantId);
+    query.addBindValue(userId);
+    if (query.exec()) {
+        qInfo() << "[DEBUG] Updated users table for userId=" << userId << "restaurantId=" << restaurantId;
+        sendJsonResponse(socket, 200, QJsonObject{{"message", "Updated"}});
+    } else {
+        qWarning() << "[DEBUG] Failed to update users table:" << query.lastError().text();
+        sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to update"}});
+    }
+}
+
+void HttpServer::handleCreateRestaurant(QTcpSocket *socket, const QString &body) {
+    QJsonParseError error;
+    QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError) {
+        sendJsonResponse(socket, 400, QJsonObject{{"error", "Invalid JSON"}});
+        return;
+    }
+    QJsonObject req = doc.object();
+    QString name = req["name"].toString();
+    QString type = req["type"].toString();
+    QString location = req["location"].toString();
+    QString description = req["description"].toString();
+    int minPrice = req["minPrice"].toInt();
+    int maxPrice = req["maxPrice"].toInt();
+
+    // Try to get userId from JSON, or look up by username
+    int userId = req["userId"].toInt();
+    if (userId == 0 && req.contains("username")) {
+        QString username = req["username"].toString();
+        QSqlQuery userQuery;
+        userQuery.prepare("SELECT id FROM users WHERE username = ?");
+        userQuery.addBindValue(username);
+        if (userQuery.exec() && userQuery.next()) {
+            userId = userQuery.value(0).toInt();
+        } else {
+            sendJsonResponse(socket, 400, QJsonObject{{"error", "User not found"}});
+            return;
+        }
+    }
+    if (userId == 0) {
+        sendJsonResponse(socket, 400, QJsonObject{{"error", "Missing userId or username"}});
+        return;
+    }
+
+    QSqlQuery query;
+    query.prepare("INSERT INTO restaurants (name, type, location, description, min_price, max_price) VALUES (?, ?, ?, ?, ?, ?)");
+    query.addBindValue(name);
+    query.addBindValue(type);
+    query.addBindValue(location);
+    query.addBindValue(description);
+    query.addBindValue(minPrice);
+    query.addBindValue(maxPrice);
+
+    if (!query.exec()) {
+        sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to create restaurant"}});
+        return;
+    }
+    int restaurantId = query.lastInsertId().toInt();
+
+    QSqlQuery updateUser;
+    updateUser.prepare("UPDATE users SET restaurant_id = ? WHERE id = ?");
+    updateUser.addBindValue(restaurantId);
+    updateUser.addBindValue(userId);
+    if (!updateUser.exec()) {
+        sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to link user"}});
+        return;
+    }
+
+    sendJsonResponse(socket, 200, QJsonObject{{"restaurantId", restaurantId}});
+}
+
 bool HttpServer::initializeDatabase()
 {
     QSqlDatabase db = QSqlDatabase::database();
@@ -518,12 +661,50 @@ QJsonObject HttpServer::authenticateUser(const QString &username, const QString 
 bool HttpServer::registerUser(const QString &username, const QString &password, const QString &userType)
 {
     QSqlQuery query;
-    query.prepare("INSERT INTO users (username, password, user_type) VALUES (?, ?, ?)");
-    query.addBindValue(username);
-    query.addBindValue(password);
-    query.addBindValue(userType);
-    
-    return query.exec();
+    if (userType == "restaurant") {
+        // Insert user first
+        query.prepare("INSERT INTO users (username, password, user_type) VALUES (?, ?, ?)");
+        query.addBindValue(username);
+        query.addBindValue(password);
+        query.addBindValue(userType);
+        if (!query.exec()) {
+            return false;
+        }
+        int userId = query.lastInsertId().toInt();
+        // Insert restaurant with id = userId
+        QSqlQuery restQuery;
+        restQuery.prepare("INSERT INTO restaurants (id, name, type, location, description, min_price, max_price) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        restQuery.addBindValue(userId);
+        restQuery.addBindValue("New Restaurant");
+        restQuery.addBindValue("Unknown");
+        restQuery.addBindValue("Unknown");
+        restQuery.addBindValue("");
+        restQuery.addBindValue(0);
+        restQuery.addBindValue(0);
+        if (!restQuery.exec()) {
+            // Rollback user if restaurant insert fails
+            QSqlQuery delUser;
+            delUser.prepare("DELETE FROM users WHERE id = ?");
+            delUser.addBindValue(userId);
+            delUser.exec();
+            return false;
+        }
+        // Update user's restaurant_id
+        QSqlQuery updateUser;
+        updateUser.prepare("UPDATE users SET restaurant_id = ? WHERE id = ?");
+        updateUser.addBindValue(userId);
+        updateUser.addBindValue(userId);
+        if (!updateUser.exec()) {
+            return false;
+        }
+        return true;
+    } else {
+        query.prepare("INSERT INTO users (username, password, user_type) VALUES (?, ?, ?)");
+        query.addBindValue(username);
+        query.addBindValue(password);
+        query.addBindValue(userType);
+        return query.exec();
+    }
 }
 
 QJsonArray HttpServer::getRestaurantsList()
@@ -693,4 +874,21 @@ bool HttpServer::deleteMenuItem(const QString &menuItemId)
     query.addBindValue(menuItemId.toInt());
     
     return query.exec();
-} 
+}
+
+void HttpServer::handleGetUserInfo(QTcpSocket *socket, const QString &userId) {
+    QSqlQuery query;
+    query.prepare("SELECT id, username, user_type, restaurant_id, created_at FROM users WHERE id = ?");
+    query.addBindValue(userId.toInt());
+    if (query.exec() && query.next()) {
+        QJsonObject userInfo;
+        userInfo["id"] = query.value(0).toInt();
+        userInfo["username"] = query.value(1).toString();
+        userInfo["userType"] = query.value(2).toString();
+        userInfo["restaurantId"] = query.value(3).isNull() ? QJsonValue() : QJsonValue(query.value(3).toInt());
+        userInfo["createdAt"] = query.value(4).toString();
+        sendJsonResponse(socket, 200, userInfo);
+    } else {
+        sendJsonResponse(socket, 404, QJsonObject{{"error", "User not found"}});
+    }
+}

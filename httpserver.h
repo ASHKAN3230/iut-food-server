@@ -41,7 +41,9 @@ private:
     void handleAddMenuItem(QTcpSocket *socket, const QString &body);
     void handleUpdateMenuItem(QTcpSocket *socket, const QString &menuItemId, const QString &body);
     void handleDeleteMenuItem(QTcpSocket *socket, const QString &menuItemId);
-    
+    void handleSetUserRestaurant(QTcpSocket *socket, const QString &body);
+    void handleCreateRestaurant(QTcpSocket *socket, const QString &body);
+    void handleGetUserInfo(QTcpSocket *socket, const QString &userId);
     // Database helpers
     bool initializeDatabase();
     QJsonObject authenticateUser(const QString &username, const QString &password);
@@ -56,4 +58,4 @@ private:
     bool deleteMenuItem(const QString &menuItemId);
 };
 
-#endif // HTTPSERVER_H 
+#endif // HTTPSERVER_H
