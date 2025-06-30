@@ -36,7 +36,7 @@ private:
     void handleGetRestaurants(QTcpSocket *socket);
     void handleGetMenu(QTcpSocket *socket, const QString &restaurantId);
     void handleCreateOrder(QTcpSocket *socket, const QString &body);
-    void handleGetOrders(QTcpSocket *socket, const QString &userId);
+    void handleGetOrders(QTcpSocket *socket, const QString &userId, const QString &userType);
     void handleUpdateOrderStatus(QTcpSocket *socket, const QString &orderId, const QString &body);
     void handleAddMenuItem(QTcpSocket *socket, const QString &body);
     void handleUpdateMenuItem(QTcpSocket *socket, const QString &menuItemId, const QString &body);
@@ -44,6 +44,7 @@ private:
     void handleSetUserRestaurant(QTcpSocket *socket, const QString &body);
     void handleCreateRestaurant(QTcpSocket *socket, const QString &body);
     void handleGetUserInfo(QTcpSocket *socket, const QString &userId);
+    void handleDebugOrders(QTcpSocket *socket);
     // Database helpers
     bool initializeDatabase();
     QJsonObject authenticateUser(const QString &username, const QString &password);

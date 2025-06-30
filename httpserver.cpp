@@ -72,9 +72,16 @@ void HttpServer::handleRequest(QTcpSocket *socket)
     } else if (path == "/api/orders" && method == "POST") {
         handleCreateOrder(socket, body);
     } else if (path.startsWith("/api/orders") && method == "GET") {
-        // Extract user ID from query parameters or headers
-        QString userId = "1"; // For now, hardcoded - you'll need to implement proper authentication
-        handleGetOrders(socket, userId);
+        // Parse userId and userType from query string
+        QUrl url("http://localhost" + path);
+        QUrlQuery query(url);
+        QString userId = query.queryItemValue("userId");
+        QString userType = query.queryItemValue("userType");
+        if (userId.isEmpty() || userType.isEmpty()) {
+            sendJsonResponse(socket, 400, QJsonObject{{"error", "Missing userId or userType"}});
+            return;
+        }
+        handleGetOrders(socket, userId, userType);
     } else if (path.startsWith("/api/orders/") && method == "PUT") {
         QString orderId = path.split("/")[3];
         handleUpdateOrderStatus(socket, orderId, body);
@@ -91,6 +98,8 @@ void HttpServer::handleRequest(QTcpSocket *socket)
         handleSetUserRestaurant(socket, body);
     } else if (path == "/api/restaurants/create" && method == "POST") {
         handleCreateRestaurant(socket, body);
+    } else if (path == "/api/debug/orders" && method == "GET") {
+        handleDebugOrders(socket);
     } else if (path.startsWith("/api/users/") && method == "GET") {
         // /api/users/{id}
         QStringList pathParts = path.split("/");
@@ -312,9 +321,11 @@ void HttpServer::handleCreateOrder(QTcpSocket *socket, const QString &body)
     }
 }
 
-void HttpServer::handleGetOrders(QTcpSocket *socket, const QString &userId)
+void HttpServer::handleGetOrders(QTcpSocket *socket, const QString &userId, const QString &userType)
 {
-    QJsonArray orders = getOrders(userId, "customer"); // You'll need to determine user type
+    qInfo() << "[DEBUG] handleGetOrders called with userId:" << userId << "userType:" << userType;
+    QJsonArray orders = getOrders(userId, userType);
+    qInfo() << "[DEBUG] handleGetOrders returning" << orders.size() << "orders";
     sendJsonResponse(socket, 200, orders);
 }
 
@@ -631,9 +642,40 @@ bool HttpServer::initializeDatabase()
                   "('restaurant2', 'password123', 'restaurant', 2),"
                   "('customer1', 'password123', 'customer', NULL),"
                   "('manager1', 'password123', 'manager', NULL)");
+        
+        // Insert sample orders
+        query.exec("INSERT INTO orders (customer_id, restaurant_id, total_amount, order_status, created_at) VALUES "
+                  "(3, 1, 40000, 'completed', datetime('now', '-2 days')),"
+                  "(3, 2, 30000, 'pending', datetime('now', '-1 day')),"
+                  "(3, 1, 25000, 'preparing', datetime('now', '-6 hours'))");
+        
+        // Insert sample order items
+        query.exec("INSERT INTO order_items (order_id, menu_item_id, quantity, price) VALUES "
+                  "(1, 1, 1, 25000),"
+                  "(1, 2, 1, 15000),"
+                  "(2, 3, 1, 30000),"
+                  "(3, 1, 1, 25000)");
     }
     
     qInfo() << "Database initialized successfully";
+    
+    // Debug: Check if sample data exists
+    QSqlQuery debugQuery;
+    debugQuery.exec("SELECT COUNT(*) FROM orders");
+    if (debugQuery.next()) {
+        qInfo() << "[DEBUG] Total orders in database:" << debugQuery.value(0).toInt();
+    }
+    
+    debugQuery.exec("SELECT COUNT(*) FROM users");
+    if (debugQuery.next()) {
+        qInfo() << "[DEBUG] Total users in database:" << debugQuery.value(0).toInt();
+    }
+    
+    debugQuery.exec("SELECT COUNT(*) FROM restaurants");
+    if (debugQuery.next()) {
+        qInfo() << "[DEBUG] Total restaurants in database:" << debugQuery.value(0).toInt();
+    }
+    
     return true;
 }
 
@@ -800,6 +842,8 @@ QJsonArray HttpServer::getOrders(const QString &userId, const QString &userType)
     QJsonArray orders;
     QSqlQuery query;
     
+    qInfo() << "[DEBUG] getOrders called with userId:" << userId << "userType:" << userType;
+    
     if (userType == "restaurant") {
         query.prepare("SELECT o.id, u.username, o.total_amount, o.order_status, o.created_at "
                      "FROM orders o "
@@ -816,16 +860,27 @@ QJsonArray HttpServer::getOrders(const QString &userId, const QString &userType)
         query.addBindValue(userId.toInt());
     }
     
+    qInfo() << "[DEBUG] Executing query:" << query.lastQuery();
+    
     if (query.exec()) {
+        qInfo() << "[DEBUG] Query executed successfully";
         while (query.next()) {
             QJsonObject order;
             order["id"] = query.value(0).toInt();
-            order["customerName"] = query.value(1).toString();
+            if (userType == "restaurant") {
+                order["customerName"] = query.value(1).toString();
+            } else {
+                order["restaurantName"] = query.value(1).toString();
+            }
             order["totalAmount"] = query.value(2).toInt();
             order["status"] = query.value(3).toString();
             order["createdAt"] = query.value(4).toString();
             orders.append(order);
+            qInfo() << "[DEBUG] Found order:" << order;
         }
+        qInfo() << "[DEBUG] Total orders found:" << orders.size();
+    } else {
+        qWarning() << "[DEBUG] Query failed:" << query.lastError().text();
     }
     
     return orders;
@@ -891,4 +946,60 @@ void HttpServer::handleGetUserInfo(QTcpSocket *socket, const QString &userId) {
     } else {
         sendJsonResponse(socket, 404, QJsonObject{{"error", "User not found"}});
     }
+}
+
+void HttpServer::handleDebugOrders(QTcpSocket *socket) {
+    QJsonObject debugInfo;
+    
+    // Check orders table
+    QSqlQuery query;
+    query.exec("SELECT COUNT(*) FROM orders");
+    if (query.next()) {
+        debugInfo["totalOrders"] = query.value(0).toInt();
+    }
+    
+    // Get all orders with details
+    QJsonArray orders;
+    query.exec("SELECT o.id, o.customer_id, o.restaurant_id, o.total_amount, o.order_status, o.created_at, "
+               "u.username as customer_name, r.name as restaurant_name "
+               "FROM orders o "
+               "LEFT JOIN users u ON o.customer_id = u.id "
+               "LEFT JOIN restaurants r ON o.restaurant_id = r.id");
+    
+    while (query.next()) {
+        QJsonObject order;
+        order["id"] = query.value(0).toInt();
+        order["customerId"] = query.value(1).toInt();
+        order["restaurantId"] = query.value(2).toInt();
+        order["totalAmount"] = query.value(3).toInt();
+        order["status"] = query.value(4).toString();
+        order["createdAt"] = query.value(5).toString();
+        order["customerName"] = query.value(6).toString();
+        order["restaurantName"] = query.value(7).toString();
+        orders.append(order);
+    }
+    
+    debugInfo["orders"] = orders;
+    
+    // Check users table
+    query.exec("SELECT COUNT(*) FROM users");
+    if (query.next()) {
+        debugInfo["totalUsers"] = query.value(0).toInt();
+    }
+    
+    // Get all users
+    QJsonArray users;
+    query.exec("SELECT id, username, user_type, restaurant_id FROM users");
+    while (query.next()) {
+        QJsonObject user;
+        user["id"] = query.value(0).toInt();
+        user["username"] = query.value(1).toString();
+        user["userType"] = query.value(2).toString();
+        user["restaurantId"] = query.value(3).isNull() ? QJsonValue() : QJsonValue(query.value(3).toInt());
+        users.append(user);
+    }
+    
+    debugInfo["users"] = users;
+    
+    sendJsonResponse(socket, 200, debugInfo);
 }
