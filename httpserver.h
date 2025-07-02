@@ -45,6 +45,8 @@ private:
     void handleCreateRestaurant(QTcpSocket *socket, const QString &body);
     void handleGetUserInfo(QTcpSocket *socket, const QString &userId);
     void handleDebugOrders(QTcpSocket *socket);
+    void handleGetPendingAuthRestaurants(QTcpSocket *socket);
+    void handleSetRestaurantAuthStatus(QTcpSocket *socket, const QString &body);
     // Database helpers
     bool initializeDatabase();
     QJsonObject authenticateUser(const QString &username, const QString &password);

@@ -109,6 +109,10 @@ void HttpServer::handleRequest(QTcpSocket *socket)
         } else {
             sendJsonResponse(socket, 400, QJsonObject{{"error", "Missing user id"}});
         }
+    } else if (path == "/api/restaurants/pending-auth" && method == "GET") {
+        handleGetPendingAuthRestaurants(socket);
+    } else if (path == "/api/restaurants/auth-status" && method == "POST") {
+        handleSetRestaurantAuthStatus(socket, body);
     } else {
         sendResponse(socket, 404, "text/plain", "404 Not Found");
     }
@@ -516,7 +520,8 @@ void HttpServer::handleCreateRestaurant(QTcpSocket *socket, const QString &body)
     }
 
     QSqlQuery query;
-    query.prepare("INSERT INTO restaurants (name, type, location, description, min_price, max_price) VALUES (?, ?, ?, ?, ?, ?)");
+    query.prepare("INSERT INTO restaurant_applications (user_id, name, type, location, description, min_price, max_price) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    query.addBindValue(userId);
     query.addBindValue(name);
     query.addBindValue(type);
     query.addBindValue(location);
@@ -525,21 +530,11 @@ void HttpServer::handleCreateRestaurant(QTcpSocket *socket, const QString &body)
     query.addBindValue(maxPrice);
 
     if (!query.exec()) {
-        sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to create restaurant"}});
+        sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to submit application"}});
         return;
     }
-    int restaurantId = query.lastInsertId().toInt();
-
-    QSqlQuery updateUser;
-    updateUser.prepare("UPDATE users SET restaurant_id = ? WHERE id = ?");
-    updateUser.addBindValue(restaurantId);
-    updateUser.addBindValue(userId);
-    if (!updateUser.exec()) {
-        sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to link user"}});
-        return;
-    }
-
-    sendJsonResponse(socket, 200, QJsonObject{{"restaurantId", restaurantId}});
+    int applicationId = query.lastInsertId().toInt();
+    sendJsonResponse(socket, 200, QJsonObject{{"applicationId", applicationId}});
 }
 
 bool HttpServer::initializeDatabase()
@@ -623,6 +618,19 @@ bool HttpServer::initializeDatabase()
         qCritical() << "Failed to create order_items table:" << query.lastError().text();
         return false;
     }
+    
+    // Add after users and restaurants table creation
+    query.exec("CREATE TABLE IF NOT EXISTS restaurant_applications ("
+               "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+               "user_id INTEGER NOT NULL,"
+               "name TEXT NOT NULL,"
+               "type TEXT NOT NULL,"
+               "location TEXT NOT NULL,"
+               "description TEXT,"
+               "min_price INTEGER NOT NULL,"
+               "max_price INTEGER NOT NULL,"
+               "created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+               ");");
     
     // Insert sample data if tables are empty
     QSqlQuery checkQuery("SELECT COUNT(*) FROM restaurants");
@@ -1019,4 +1027,84 @@ void HttpServer::handleDebugOrders(QTcpSocket *socket) {
     debugInfo["users"] = users;
     
     sendJsonResponse(socket, 200, debugInfo);
+}
+
+void HttpServer::handleGetPendingAuthRestaurants(QTcpSocket *socket) {
+    QJsonArray pending;
+    QSqlQuery query("SELECT id, user_id, name, type, location, description, min_price, max_price, created_at FROM restaurant_applications");
+    while (query.next()) {
+        QJsonObject obj;
+        obj["id"] = query.value(0).toInt();
+        obj["userId"] = query.value(1).toInt();
+        obj["name"] = query.value(2).toString();
+        obj["type"] = query.value(3).toString();
+        obj["location"] = query.value(4).toString();
+        obj["description"] = query.value(5).toString();
+        obj["minPrice"] = query.value(6).toInt();
+        obj["maxPrice"] = query.value(7).toInt();
+        obj["createdAt"] = query.value(8).toString();
+        pending.append(obj);
+    }
+    sendJsonResponse(socket, 200, pending);
+}
+
+void HttpServer::handleSetRestaurantAuthStatus(QTcpSocket *socket, const QString &body) {
+    QJsonParseError error;
+    QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError) {
+        sendJsonResponse(socket, 400, QJsonObject{{"error", "Invalid JSON"}});
+        return;
+    }
+    QJsonObject req = doc.object();
+    int applicationId = req["applicationId"].toInt();
+    int is_auth = req["is_auth"].toInt();
+    if (is_auth == 1) { // Approve
+        // Get application data
+        QSqlQuery getApp;
+        getApp.prepare("SELECT user_id, name, type, location, description, min_price, max_price FROM restaurant_applications WHERE id = ?");
+        getApp.addBindValue(applicationId);
+        if (!getApp.exec() || !getApp.next()) {
+            sendJsonResponse(socket, 404, QJsonObject{{"error", "Application not found"}});
+            return;
+        }
+        int userId = getApp.value(0).toInt();
+        QString name = getApp.value(1).toString();
+        QString type = getApp.value(2).toString();
+        QString location = getApp.value(3).toString();
+        QString description = getApp.value(4).toString();
+        int minPrice = getApp.value(5).toInt();
+        int maxPrice = getApp.value(6).toInt();
+        // Insert into restaurants
+        QSqlQuery ins;
+        ins.prepare("INSERT INTO restaurants (name, type, location, description, min_price, max_price, is_auth) VALUES (?, ?, ?, ?, ?, ?, 1)");
+        ins.addBindValue(name);
+        ins.addBindValue(type);
+        ins.addBindValue(location);
+        ins.addBindValue(description);
+        ins.addBindValue(minPrice);
+        ins.addBindValue(maxPrice);
+        if (!ins.exec()) {
+            sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to approve application"}});
+            return;
+        }
+        int restaurantId = ins.lastInsertId().toInt();
+        // Update user's restaurant_id
+        QSqlQuery updUser;
+        updUser.prepare("UPDATE users SET restaurant_id = ? WHERE id = ?");
+        updUser.addBindValue(restaurantId);
+        updUser.addBindValue(userId);
+        updUser.exec();
+        // Delete application
+        QSqlQuery del;
+        del.prepare("DELETE FROM restaurant_applications WHERE id = ?");
+        del.addBindValue(applicationId);
+        del.exec();
+        sendJsonResponse(socket, 200, QJsonObject{{"message", "Application approved"}});
+    } else { // Deny
+        QSqlQuery del;
+        del.prepare("DELETE FROM restaurant_applications WHERE id = ?");
+        del.addBindValue(applicationId);
+        del.exec();
+        sendJsonResponse(socket, 200, QJsonObject{{"message", "Application denied"}});
+    }
 }
