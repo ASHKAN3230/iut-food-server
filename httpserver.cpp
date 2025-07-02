@@ -575,11 +575,13 @@ bool HttpServer::initializeDatabase()
                    "description TEXT,"
                    "min_price INTEGER NOT NULL,"
                    "max_price INTEGER NOT NULL,"
+                   "is_auth INTEGER DEFAULT 0,"
                    "created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
                    ");")) {
         qCritical() << "Failed to create restaurants table:" << query.lastError().text();
         return false;
     }
+    query.exec("ALTER TABLE restaurants ADD COLUMN is_auth INTEGER DEFAULT 0");
     
     // Menu items table
     if (!query.exec("CREATE TABLE IF NOT EXISTS menu_items ("
@@ -942,6 +944,21 @@ void HttpServer::handleGetUserInfo(QTcpSocket *socket, const QString &userId) {
         userInfo["userType"] = query.value(2).toString();
         userInfo["restaurantId"] = query.value(3).isNull() ? QJsonValue() : QJsonValue(query.value(3).toInt());
         userInfo["createdAt"] = query.value(4).toString();
+        if (userInfo["userType"].toString() == "restaurant") {
+            int restId = query.value(3).isNull() ? -1 : query.value(3).toInt();
+            bool isAuth = false;
+            if (restId > 0) {
+                QSqlQuery restQuery;
+                restQuery.prepare("SELECT is_auth FROM restaurants WHERE id = ?");
+                restQuery.addBindValue(restId);
+                if (restQuery.exec() && restQuery.next()) {
+                    isAuth = restQuery.value(0).toInt() == 1;
+                }
+            }
+            userInfo["isAuth"] = isAuth;
+        } else {
+            userInfo["isAuth"] = false;
+        }
         sendJsonResponse(socket, 200, userInfo);
     } else {
         sendJsonResponse(socket, 404, QJsonObject{{"error", "User not found"}});
