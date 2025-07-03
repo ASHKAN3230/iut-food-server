@@ -624,6 +624,7 @@ bool HttpServer::initializeDatabase()
         qCritical() << "Failed to create orders table:" << query.lastError().text();
         return false;
     }
+    query.exec("ALTER TABLE orders ADD COLUMN rating INTEGER DEFAULT 0");
     
     // Order items table
     if (!query.exec("CREATE TABLE IF NOT EXISTS order_items ("
@@ -922,6 +923,15 @@ QJsonArray HttpServer::getOrders(const QString &userId, const QString &userType)
             order["totalAmount"] = query.value(2).toInt();
             order["status"] = query.value(3).toString();
             order["createdAt"] = query.value(4).toString();
+            // Fetch rating
+            QSqlQuery ratingQuery;
+            ratingQuery.prepare("SELECT rating FROM orders WHERE id = ?");
+            ratingQuery.addBindValue(query.value(0).toInt());
+            if (ratingQuery.exec() && ratingQuery.next()) {
+                order["rating"] = ratingQuery.value(0).toInt();
+            } else {
+                order["rating"] = 0;
+            }
             orders.append(order);
             qInfo() << "[DEBUG] Found order:" << order;
         }

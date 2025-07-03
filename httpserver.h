@@ -63,6 +63,7 @@ private:
     bool deleteMenuItem(const QString &menuItemId);
     void handleDeleteRestaurant(QTcpSocket *socket, const QString &restaurantId);
     void handleDeleteUser(QTcpSocket *socket, const QString &userId);
+    void handleRateOrder(QTcpSocket *socket, const QString &orderId, const QString &body);
 };
 
 #endif // HTTPSERVER_H
