@@ -61,6 +61,8 @@ private:
     bool addMenuItem(const QString &restaurantId, const QString &foodType, const QString &foodName, const QString &foodDetails, int price);
     bool updateMenuItem(const QString &menuItemId, const QString &foodType, const QString &foodName, const QString &foodDetails, int price);
     bool deleteMenuItem(const QString &menuItemId);
+    void handleDeleteRestaurant(QTcpSocket *socket, const QString &restaurantId);
+    void handleDeleteUser(QTcpSocket *socket, const QString &userId);
 };
 
 #endif // HTTPSERVER_H

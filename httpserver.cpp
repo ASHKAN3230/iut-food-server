@@ -115,6 +115,24 @@ void HttpServer::handleRequest(QTcpSocket *socket)
         handleSetRestaurantAuthStatus(socket, body);
     } else if (path == "/api/forgot-password" && method == "POST") {
         handleForgotPassword(socket, body);
+    } else if (path.startsWith("/api/restaurants/") && method == "DELETE") {
+        // /api/restaurants/{id}
+        QStringList pathParts = path.split("/");
+        if (pathParts.size() >= 4) {
+            QString restaurantId = pathParts[3];
+            handleDeleteRestaurant(socket, restaurantId);
+        } else {
+            sendJsonResponse(socket, 400, QJsonObject{{"error", "Missing restaurant id"}});
+        }
+    } else if (path.startsWith("/api/users/") && method == "DELETE") {
+        // /api/users/{id}
+        QStringList pathParts = path.split("/");
+        if (pathParts.size() >= 4) {
+            QString userId = pathParts[3];
+            handleDeleteUser(socket, userId);
+        } else {
+            sendJsonResponse(socket, 400, QJsonObject{{"error", "Missing user id"}});
+        }
     } else {
         sendResponse(socket, 404, "text/plain", "404 Not Found");
     }
@@ -645,7 +663,7 @@ bool HttpServer::initializeDatabase()
         insertAdminQuery.addBindValue("admin");
         insertAdminQuery.addBindValue("manager");
         if (insertAdminQuery.exec()) {
-            qInfo() << "Default admin/manager account created: username='admin', password='admin123'";
+            qInfo() << "Default admin/manager account created: username='admin', password='admin'";
         } else {
             qWarning() << "Failed to create default admin/manager account:" << insertAdminQuery.lastError().text();
         }
@@ -1166,4 +1184,26 @@ bool HttpServer::updateUserPassword(const QString &username, const QString &newP
         return false;
     }
     return query.numRowsAffected() > 0;
+}
+
+void HttpServer::handleDeleteRestaurant(QTcpSocket *socket, const QString &restaurantId) {
+    QSqlQuery query;
+    query.prepare("DELETE FROM restaurants WHERE id = ?");
+    query.addBindValue(restaurantId);
+    if (query.exec() && query.numRowsAffected() > 0) {
+        sendJsonResponse(socket, 200, QJsonObject{{"message", "Restaurant deleted successfully"}});
+    } else {
+        sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to delete restaurant or not found"}});
+    }
+}
+
+void HttpServer::handleDeleteUser(QTcpSocket *socket, const QString &userId) {
+    QSqlQuery query;
+    query.prepare("DELETE FROM users WHERE id = ?");
+    query.addBindValue(userId);
+    if (query.exec() && query.numRowsAffected() > 0) {
+        sendJsonResponse(socket, 200, QJsonObject{{"message", "User deleted successfully"}});
+    } else {
+        sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to delete user or not found"}});
+    }
 }
