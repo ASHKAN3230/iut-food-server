@@ -1,11 +1,29 @@
-#include <QCoreApplication>
+#include <QApplication>
 #include <QSqlDatabase>
 #include <QDebug>
 #include "httpserver.h"
+#include "server_gui.h"
+#include <QHostAddress>
 
 int main(int argc, char *argv[])
 {
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);
+    ServerGUI w;
+    HttpServer server;
+
+    QObject::connect(&server, &HttpServer::logMessage, &w, &ServerGUI::appendLog);
+
+    QObject::connect(&w, &ServerGUI::startServer, [&]() {
+        QString address = w.getAddress();
+        quint16 port = w.getPort();
+        server.listen(QHostAddress(address), port);
+    });
+    QObject::connect(&w, &ServerGUI::stopServer, [&]() {
+        server.close();
+        w.appendLog("Server stopped.");
+    });
+
+    w.show();
 
     // Set application info
     app.setApplicationName("IUT Food Server");
@@ -24,17 +42,6 @@ int main(int argc, char *argv[])
 
     qInfo() << "Database connected successfully";
 
-    // Create HTTP server
-    HttpServer server;
-
-    // Start server
-    const auto port = 8080;
-    if (!server.listen(QHostAddress::Any, port)) {
-        qCritical() << "Failed to start server on port" << port;
-        return -1;
-    }
-
-    qInfo() << "Server started successfully on port" << port;
     qInfo() << "Server is running. Press Ctrl+C to stop.";
     qInfo() << "";
     qInfo() << "Available API endpoints:";

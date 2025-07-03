@@ -1,4 +1,4 @@
-QT += core network sql
+QT += core network sql widgets
 QT -= gui
 
 CONFIG += c++17 console
@@ -12,11 +12,16 @@ TEMPLATE = app
 
 SOURCES += \
     main.cpp \
-    httpserver.cpp
+    httpserver.cpp \
+    server_gui.cpp
 
 HEADERS += \
     httpserver.h \
+    server_gui.h \
     # ... headers will be added as files are created
+
+FORMS += \
+    server_gui.ui \
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin
