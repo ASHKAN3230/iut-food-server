@@ -677,36 +677,7 @@ bool HttpServer::initializeDatabase()
     // Insert sample data if tables are empty
     QSqlQuery checkQuery("SELECT COUNT(*) FROM restaurants");
     if (checkQuery.exec() && checkQuery.next() && checkQuery.value(0).toInt() == 0) {
-        // Insert sample restaurants
-        query.exec("INSERT INTO restaurants (name, type, location, description, min_price, max_price) VALUES "
-                  "('Shaher', 'Fast Food', 'esfahanunivercity-sheikhbahaie-34', 'Delicious fast food restaurant', 500000, 600000),"
-                  "('Aseman', 'Iranian', 'esfahanunivercity-sheikhbahaie-12', 'Authentic Iranian cuisine', 10000, 100000)");
-        
-        // Insert sample menu items
-        query.exec("INSERT INTO menu_items (restaurant_id, food_type, food_name, food_details, price) VALUES "
-                  "(1, 'Main Course', 'Classic Burger', 'Juicy beef burger with fresh vegetables', 25000),"
-                  "(1, 'Appetizer', 'French Fries', 'Crispy golden fries', 15000),"
-                  "(2, 'Main Course', 'Kebab', 'Traditional Iranian kebab', 30000)");
-        
-        // Insert sample users
-        query.exec("INSERT INTO users (username, password, user_type, restaurant_id) VALUES "
-                  "('restaurant1', 'password123', 'restaurant', 1),"
-                  "('restaurant2', 'password123', 'restaurant', 2),"
-                  "('customer1', 'password123', 'customer', NULL),"
-                  "('manager1', 'password123', 'manager', NULL)");
-        
-        // Insert sample orders
-        query.exec("INSERT INTO orders (customer_id, restaurant_id, total_amount, order_status, created_at) VALUES "
-                  "(3, 1, 40000, 'completed', datetime('now', '-2 days')),"
-                  "(3, 2, 30000, 'pending', datetime('now', '-1 day')),"
-                  "(3, 1, 25000, 'preparing', datetime('now', '-6 hours'))");
-        
-        // Insert sample order items
-        query.exec("INSERT INTO order_items (order_id, menu_item_id, quantity, price) VALUES "
-                  "(1, 1, 1, 25000),"
-                  "(1, 2, 1, 15000),"
-                  "(2, 3, 1, 30000),"
-                  "(3, 1, 1, 25000)");
+        // Sample data insertion removed
     }
     
     qInfo() << "Database initialized successfully";
