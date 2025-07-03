@@ -1127,24 +1127,37 @@ void HttpServer::handleSetRestaurantAuthStatus(QTcpSocket *socket, const QString
         QString description = getApp.value(4).toString();
         int minPrice = getApp.value(5).toInt();
         int maxPrice = getApp.value(6).toInt();
-        // Insert into restaurants
-        QSqlQuery ins;
-        ins.prepare("INSERT INTO restaurants (name, type, location, description, min_price, max_price, is_auth) VALUES (?, ?, ?, ?, ?, ?, 1)");
-        ins.addBindValue(name);
-        ins.addBindValue(type);
-        ins.addBindValue(location);
-        ins.addBindValue(description);
-        ins.addBindValue(minPrice);
-        ins.addBindValue(maxPrice);
-        if (!ins.exec()) {
-            sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to approve application"}});
-            return;
+        // Try to update existing restaurant row
+        QSqlQuery upd;
+        upd.prepare("UPDATE restaurants SET name=?, type=?, location=?, description=?, min_price=?, max_price=?, is_auth=1 WHERE id=?");
+        upd.addBindValue(name);
+        upd.addBindValue(type);
+        upd.addBindValue(location);
+        upd.addBindValue(description);
+        upd.addBindValue(minPrice);
+        upd.addBindValue(maxPrice);
+        upd.addBindValue(userId);
+        upd.exec();
+        if (upd.numRowsAffected() == 0) {
+            // If no row was updated, insert a new one with userId as id
+            QSqlQuery ins;
+            ins.prepare("INSERT INTO restaurants (id, name, type, location, description, min_price, max_price, is_auth) VALUES (?, ?, ?, ?, ?, ?, ?, 1)");
+            ins.addBindValue(userId);
+            ins.addBindValue(name);
+            ins.addBindValue(type);
+            ins.addBindValue(location);
+            ins.addBindValue(description);
+            ins.addBindValue(minPrice);
+            ins.addBindValue(maxPrice);
+            if (!ins.exec()) {
+                sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to approve application"}});
+                return;
+            }
         }
-        int restaurantId = ins.lastInsertId().toInt();
-        // Update user's restaurant_id
+        // Update user's restaurant_id to userId
         QSqlQuery updUser;
         updUser.prepare("UPDATE users SET restaurant_id = ? WHERE id = ?");
-        updUser.addBindValue(restaurantId);
+        updUser.addBindValue(userId);
         updUser.addBindValue(userId);
         updUser.exec();
         // Delete application
