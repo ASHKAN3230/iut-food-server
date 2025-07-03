@@ -16,10 +16,6 @@ class HttpServer : public QObject
 public:
     HttpServer(QObject *parent = nullptr);
     bool listen(const QHostAddress &address, quint16 port);
-    void close();
-
-signals:
-    void logMessage(const QString &msg);
 
 private slots:
     void handleNewConnection();

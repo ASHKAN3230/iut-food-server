@@ -7,9 +7,6 @@
 #include <QDebug>
 #include <QDateTime>
 
-// Helper macro for emitting logs
-#define EMIT_LOG(msg) emit logMessage(QString("[Server] ") + msg)
-
 HttpServer::HttpServer(QObject *parent) : QObject(parent), server(this)
 {
     connect(&server, &QTcpServer::newConnection, this, &HttpServer::handleNewConnection);
@@ -18,24 +15,17 @@ HttpServer::HttpServer(QObject *parent) : QObject(parent), server(this)
 
 bool HttpServer::listen(const QHostAddress &address, quint16 port)
 {
-    if (!server.listen(address, port)) {
-        EMIT_LOG(QString("Failed to start on %1:%2").arg(address.toString()).arg(port));
-        return false;
-    }
-    EMIT_LOG(QString("Listening on %1:%2").arg(address.toString()).arg(port));
-    connect(&server, &QTcpServer::newConnection, this, &HttpServer::handleNewConnection);
-    return true;
+    return server.listen(address, port);
 }
 
 void HttpServer::handleNewConnection()
 {
-    QTcpSocket *clientSocket = server.nextPendingConnection();
-    if (!clientSocket) return;
-    EMIT_LOG(QString("New connection from %1").arg(clientSocket->peerAddress().toString()));
-    connect(clientSocket, &QTcpSocket::readyRead, this, [this, clientSocket]() {
-        handleRequest(clientSocket);
+    QTcpSocket *socket = server.nextPendingConnection();
+    qInfo() << "New connection from:" << socket->peerAddress().toString();
+    connect(socket, &QTcpSocket::readyRead, this, [this, socket]() {
+        handleRequest(socket);
     });
-    connect(clientSocket, &QTcpSocket::disconnected, clientSocket, &QTcpSocket::deleteLater);
+    connect(socket, &QTcpSocket::disconnected, socket, &QTcpSocket::deleteLater);
 }
 
 void HttpServer::handleRequest(QTcpSocket *socket)
@@ -43,9 +33,9 @@ void HttpServer::handleRequest(QTcpSocket *socket)
     QByteArray request = socket->readAll();
     QString requestStr = QString::fromUtf8(request);
     
-    EMIT_LOG(QString("[API] Raw request: %1").arg(requestStr.split("\r\n").first()));
+    qInfo() << "Received request:" << requestStr.split("\r\n").first();
     // Log the full request for debugging
-    EMIT_LOG(requestStr);
+    qInfo() << "Full HTTP request:\n" << requestStr;
     
     // Parse HTTP request
     QStringList lines = requestStr.split("\r\n");
@@ -58,7 +48,7 @@ void HttpServer::handleRequest(QTcpSocket *socket)
     QString method = parts[0];
     QString path = parts[1];
     
-    EMIT_LOG(QString("Request: %1 %2").arg(method).arg(path));
+    qInfo() << "Request:" << method << path;
     
     // Extract body (everything after double \r\n)
     QString body;
@@ -99,7 +89,7 @@ void HttpServer::handleRequest(QTcpSocket *socket)
         QString orderId = path.split("/")[3];
         handleUpdateOrderStatus(socket, orderId, body);
     } else if (path == "/api/menu" && method == "POST") {
-        EMIT_LOG(QString("[DEBUG] /api/menu POST body: %1").arg(body));
+        qInfo() << "[DEBUG] /api/menu POST body:" << body;
         handleAddMenuItem(socket, body);
     } else if (path.startsWith("/api/menu/") && method == "PUT") {
         QString menuItemId = path.split("/")[3];
@@ -360,9 +350,9 @@ void HttpServer::handleCreateOrder(QTcpSocket *socket, const QString &body)
 
 void HttpServer::handleGetOrders(QTcpSocket *socket, const QString &userId, const QString &userType)
 {
-    EMIT_LOG(QString("[DEBUG] handleGetOrders called with userId: %1 userType: %2").arg(userId).arg(userType));
+    qInfo() << "[DEBUG] handleGetOrders called with userId:" << userId << "userType:" << userType;
     QJsonArray orders = getOrders(userId, userType);
-    EMIT_LOG(QString("[DEBUG] handleGetOrders returning %1 orders").arg(orders.size()));
+    qInfo() << "[DEBUG] handleGetOrders returning" << orders.size() << "orders";
     sendJsonResponse(socket, 200, orders);
 }
 
@@ -408,7 +398,7 @@ void HttpServer::handleAddMenuItem(QTcpSocket *socket, const QString &body)
         QJsonObject errorResponse;
         errorResponse["error"] = "Invalid JSON";
         sendJsonResponse(socket, 400, errorResponse);
-        EMIT_LOG(QString("[DEBUG] Invalid JSON received in /api/menu POST: %1").arg(body));
+        qWarning() << "[DEBUG] Invalid JSON received in /api/menu POST:" << body;
         return;
     }
     
@@ -418,12 +408,12 @@ void HttpServer::handleAddMenuItem(QTcpSocket *socket, const QString &body)
     QString foodName = request["foodName"].toString();
     QString foodDetails = request["foodDetails"].toString();
     int price = request["price"].toInt();
-    EMIT_LOG(QString("[DEBUG] Parsed fields:"));
-    EMIT_LOG(QString("  restaurantId: %1").arg(restaurantId));
-    EMIT_LOG(QString("  foodType: %1").arg(foodType));
-    EMIT_LOG(QString("  foodName: %1").arg(foodName));
-    EMIT_LOG(QString("  foodDetails: %1").arg(foodDetails));
-    EMIT_LOG(QString("  price: %1").arg(price));
+    qInfo() << "[DEBUG] Parsed fields:";
+    qInfo() << "  restaurantId:" << restaurantId;
+    qInfo() << "  foodType:" << foodType;
+    qInfo() << "  foodName:" << foodName;
+    qInfo() << "  foodDetails:" << foodDetails;
+    qInfo() << "  price:" << price;
     
     if (restaurantId.isEmpty() || foodType.isEmpty() || foodName.isEmpty() || foodDetails.isEmpty() || price <= 0) {
         QJsonObject errorResponse;
@@ -504,16 +494,16 @@ void HttpServer::handleSetUserRestaurant(QTcpSocket *socket, const QString &body
     QJsonObject req = doc.object();
     int userId = req["userId"].toInt();
     int restaurantId = req["restaurantId"].toInt();
-    EMIT_LOG(QString("[DEBUG] handleSetUserRestaurant: userId=%1 restaurantId=%2").arg(userId).arg(restaurantId));
+    qInfo() << "[DEBUG] handleSetUserRestaurant: userId=" << userId << "restaurantId=" << restaurantId;
     QSqlQuery query;
     query.prepare("UPDATE users SET restaurant_id = ? WHERE id = ?");
     query.addBindValue(restaurantId);
     query.addBindValue(userId);
     if (query.exec()) {
-        EMIT_LOG(QString("[DEBUG] Updated users table for userId=%1 restaurantId=%2").arg(userId).arg(restaurantId));
+        qInfo() << "[DEBUG] Updated users table for userId=" << userId << "restaurantId=" << restaurantId;
         sendJsonResponse(socket, 200, QJsonObject{{"message", "Updated"}});
     } else {
-        EMIT_LOG(QString("[DEBUG] Failed to update users table: %1").arg(query.lastError().text()));
+        qWarning() << "[DEBUG] Failed to update users table:" << query.lastError().text();
         sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to update"}});
     }
 }
@@ -574,7 +564,7 @@ bool HttpServer::initializeDatabase()
 {
     QSqlDatabase db = QSqlDatabase::database();
     if (!db.isOpen()) {
-        EMIT_LOG("Database not open");
+        qCritical() << "Database not open";
         return false;
     }
     
@@ -590,7 +580,7 @@ bool HttpServer::initializeDatabase()
                    "restaurant_id INTEGER,"
                    "created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
                    ");")) {
-        EMIT_LOG(QString("Failed to create users table: %1").arg(query.lastError().text()));
+        qCritical() << "Failed to create users table:" << query.lastError().text();
         return false;
     }
     
@@ -606,7 +596,7 @@ bool HttpServer::initializeDatabase()
                    "is_auth INTEGER DEFAULT 0,"
                    "created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
                    ");")) {
-        EMIT_LOG(QString("Failed to create restaurants table: %1").arg(query.lastError().text()));
+        qCritical() << "Failed to create restaurants table:" << query.lastError().text();
         return false;
     }
     query.exec("ALTER TABLE restaurants ADD COLUMN is_auth INTEGER DEFAULT 0");
@@ -621,7 +611,7 @@ bool HttpServer::initializeDatabase()
                    "price INTEGER NOT NULL,"
                    "created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
                    ");")) {
-        EMIT_LOG(QString("Failed to create menu_items table: %1").arg(query.lastError().text()));
+        qCritical() << "Failed to create menu_items table:" << query.lastError().text();
         return false;
     }
     
@@ -634,7 +624,7 @@ bool HttpServer::initializeDatabase()
                    "order_status TEXT DEFAULT 'pending',"
                    "created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
                    ");")) {
-        EMIT_LOG(QString("Failed to create orders table: %1").arg(query.lastError().text()));
+        qCritical() << "Failed to create orders table:" << query.lastError().text();
         return false;
     }
     query.exec("ALTER TABLE orders ADD COLUMN rating INTEGER DEFAULT 0");
@@ -650,7 +640,7 @@ bool HttpServer::initializeDatabase()
                    "FOREIGN KEY (order_id) REFERENCES orders(id),"
                    "FOREIGN KEY (menu_item_id) REFERENCES menu_items(id)"
                    ");")) {
-        EMIT_LOG(QString("Failed to create order_items table: %1").arg(query.lastError().text()));
+        qCritical() << "Failed to create order_items table:" << query.lastError().text();
         return false;
     }
     
@@ -678,9 +668,9 @@ bool HttpServer::initializeDatabase()
         insertAdminQuery.addBindValue("admin");
         insertAdminQuery.addBindValue("manager");
         if (insertAdminQuery.exec()) {
-            EMIT_LOG("Default admin/manager account created: username='admin', password='admin'");
+            qInfo() << "Default admin/manager account created: username='admin', password='admin'";
         } else {
-            EMIT_LOG("Failed to create default admin/manager account: " + insertAdminQuery.lastError().text());
+            qWarning() << "Failed to create default admin/manager account:" << insertAdminQuery.lastError().text();
         }
     }
     
@@ -719,23 +709,23 @@ bool HttpServer::initializeDatabase()
                   "(3, 1, 1, 25000)");
     }
     
-    EMIT_LOG("Database initialized successfully");
+    qInfo() << "Database initialized successfully";
     
     // Debug: Check if sample data exists
     QSqlQuery debugQuery;
     debugQuery.exec("SELECT COUNT(*) FROM orders");
     if (debugQuery.next()) {
-        EMIT_LOG(QString("[DEBUG] Total orders in database: %1").arg(debugQuery.value(0).toInt()));
+        qInfo() << "[DEBUG] Total orders in database:" << debugQuery.value(0).toInt();
     }
     
     debugQuery.exec("SELECT COUNT(*) FROM users");
     if (debugQuery.next()) {
-        EMIT_LOG(QString("[DEBUG] Total users in database: %1").arg(debugQuery.value(0).toInt()));
+        qInfo() << "[DEBUG] Total users in database:" << debugQuery.value(0).toInt();
     }
     
     debugQuery.exec("SELECT COUNT(*) FROM restaurants");
     if (debugQuery.next()) {
-        EMIT_LOG(QString("[DEBUG] Total restaurants in database: %1").arg(debugQuery.value(0).toInt()));
+        qInfo() << "[DEBUG] Total restaurants in database:" << debugQuery.value(0).toInt();
     }
     
     return true;
@@ -904,7 +894,7 @@ QJsonArray HttpServer::getOrders(const QString &userId, const QString &userType)
     QJsonArray orders;
     QSqlQuery query;
     
-    EMIT_LOG(QString("[DEBUG] getOrders called with userId: %1 userType: %2").arg(userId).arg(userType));
+    qInfo() << "[DEBUG] getOrders called with userId:" << userId << "userType:" << userType;
     
     if (userType == "restaurant") {
         query.prepare("SELECT o.id, u.username, o.total_amount, o.order_status, o.created_at "
@@ -922,10 +912,10 @@ QJsonArray HttpServer::getOrders(const QString &userId, const QString &userType)
         query.addBindValue(userId.toInt());
     }
     
-    EMIT_LOG(QString("[DEBUG] Executing query: %1").arg(query.lastQuery()));
+    qInfo() << "[DEBUG] Executing query:" << query.lastQuery();
     
     if (query.exec()) {
-        EMIT_LOG(QString("[DEBUG] Query executed successfully"));
+        qInfo() << "[DEBUG] Query executed successfully";
         while (query.next()) {
             QJsonObject order;
             order["id"] = query.value(0).toInt();
@@ -949,11 +939,11 @@ QJsonArray HttpServer::getOrders(const QString &userId, const QString &userType)
                 order["comment"] = "";
             }
             orders.append(order);
-            EMIT_LOG(QString("[DEBUG] Found order: %1").arg(QString(QJsonDocument(order).toJson(QJsonDocument::Compact))));
+            qInfo() << "[DEBUG] Found order:" << order;
         }
-        EMIT_LOG(QString("[DEBUG] Total orders found: %1").arg(orders.size()));
+        qInfo() << "[DEBUG] Total orders found:" << orders.size();
     } else {
-        EMIT_LOG(QString("[DEBUG] Query failed: %1").arg(query.lastError().text()));
+        qWarning() << "[DEBUG] Query failed:" << query.lastError().text();
     }
     
     return orders;
@@ -1189,24 +1179,24 @@ void HttpServer::handleForgotPassword(QTcpSocket *socket, const QString &body) {
     QJsonParseError error;
     QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8(), &error);
     if (error.error != QJsonParseError::NoError) {
-        EMIT_LOG("[ForgotPassword] Invalid JSON received");
+        qInfo() << "[ForgotPassword] Invalid JSON received";
         sendJsonResponse(socket, 400, QJsonObject{{"error", "Invalid JSON"}});
         return;
     }
     QJsonObject request = doc.object();
     QString username = request["username"].toString();
     QString password = request["password"].toString();
-    EMIT_LOG(QString("[ForgotPassword] Attempt for username: %1").arg(username));
+    qInfo() << "[ForgotPassword] Attempt for username:" << username;
     if (username.isEmpty() || password.isEmpty()) {
-        EMIT_LOG("[ForgotPassword] Username or password is empty");
+        qInfo() << "[ForgotPassword] Username or password is empty";
         sendJsonResponse(socket, 400, QJsonObject{{"error", "Username and password are required"}});
         return;
     }
     if (updateUserPassword(username, password)) {
-        EMIT_LOG(QString("[ForgotPassword] Password updated for username: %1").arg(username));
+        qInfo() << "[ForgotPassword] Password updated for username:" << username;
         sendJsonResponse(socket, 200, QJsonObject{{"message", "Password updated successfully"}});
     } else {
-        EMIT_LOG(QString("[ForgotPassword] Failed to update password for username: %1").arg(username));
+        qInfo() << "[ForgotPassword] Failed to update password for username:" << username;
         sendJsonResponse(socket, 400, QJsonObject{{"error", "Failed to update password (user may not exist)"}});
     }
 }
@@ -1217,9 +1207,9 @@ bool HttpServer::updateUserPassword(const QString &username, const QString &newP
     query.addBindValue(newPassword);
     query.addBindValue(username);
     bool ok = query.exec();
-    EMIT_LOG(QString("[ForgotPassword] SQL exec for username: %1 ok? %2 rows affected: %3").arg(username).arg(ok).arg(query.numRowsAffected()));
+    qInfo() << "[ForgotPassword] SQL exec for username:" << username << "ok?" << ok << "rows affected:" << query.numRowsAffected();
     if (!ok) {
-        EMIT_LOG(QString("[ForgotPassword] Failed to update password for %1: %2").arg(username).arg(query.lastError().text()));
+        qWarning() << "[ForgotPassword] Failed to update password for" << username << ":" << query.lastError().text();
         return false;
     }
     return query.numRowsAffected() > 0;
@@ -1248,22 +1238,22 @@ void HttpServer::handleDeleteUser(QTcpSocket *socket, const QString &userId) {
 }
 
 void HttpServer::handleRateOrder(QTcpSocket *socket, const QString &orderId, const QString &body) {
-    EMIT_LOG(QString("[RateOrder] Received body: %1").arg(body));
+    qInfo() << "[RateOrder] Received body:" << body;
     QJsonParseError error;
     QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8(), &error);
     if (error.error != QJsonParseError::NoError) {
-        EMIT_LOG(QString("[RateOrder] Invalid JSON error: %1").arg(error.errorString()));
+        qWarning() << "[RateOrder] Invalid JSON error:" << error.errorString();
         sendJsonResponse(socket, 400, QJsonObject{{"error", "Invalid JSON"}});
         return;
     }
     QJsonObject req = doc.object();
-    EMIT_LOG(QString("[RateOrder] Parsed JSON object: %1").arg(QString(QJsonDocument(req).toJson(QJsonDocument::Compact))));
+    qInfo() << "[RateOrder] Parsed JSON object:" << req;
     int rating = req["rating"].toInt();
-    EMIT_LOG(QString("[RateOrder] Extracted rating: %1").arg(rating));
+    qInfo() << "[RateOrder] Extracted rating:" << rating;
     QString comment = req.contains("comment") ? req["comment"].toString() : "";
-    EMIT_LOG(QString("[RateOrder] Extracted comment: %1").arg(comment));
+    qInfo() << "[RateOrder] Extracted comment:" << comment;
     if (rating < 1 || rating > 5) {
-        EMIT_LOG(QString("[RateOrder] Invalid rating value: %1").arg(rating));
+        qWarning() << "[RateOrder] Invalid rating value:" << rating;
         sendJsonResponse(socket, 400, QJsonObject{{"error", "Rating must be between 1 and 5"}});
         return;
     }
@@ -1273,16 +1263,10 @@ void HttpServer::handleRateOrder(QTcpSocket *socket, const QString &orderId, con
     query.addBindValue(comment);
     query.addBindValue(orderId);
     if (query.exec() && query.numRowsAffected() > 0) {
-        EMIT_LOG(QString("[RateOrder] Order rated successfully for orderId: %1").arg(orderId));
+        qInfo() << "[RateOrder] Order rated successfully for orderId:" << orderId;
         sendJsonResponse(socket, 200, QJsonObject{{"message", "Order rated successfully"}});
     } else {
-        EMIT_LOG(QString("[RateOrder] Failed to rate order or not found. orderId: %1 SQL error: %2").arg(orderId).arg(query.lastError().text()));
+        qWarning() << "[RateOrder] Failed to rate order or not found. orderId:" << orderId << " SQL error:" << query.lastError().text();
         sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to rate order or not found"}});
     }
-}
-
-void HttpServer::close()
-{
-    server.close();
-    EMIT_LOG("Server closed (no longer listening for new connections)");
 }
