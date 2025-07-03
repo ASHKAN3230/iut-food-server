@@ -82,6 +82,9 @@ void HttpServer::handleRequest(QTcpSocket *socket)
             return;
         }
         handleGetOrders(socket, userId, userType);
+    } else if (path.startsWith("/api/orders/") && path.endsWith("/rate") && method == "PUT") {
+        QString orderId = path.split("/")[3];
+        handleRateOrder(socket, orderId, body);
     } else if (path.startsWith("/api/orders/") && method == "PUT") {
         QString orderId = path.split("/")[3];
         handleUpdateOrderStatus(socket, orderId, body);
@@ -625,6 +628,7 @@ bool HttpServer::initializeDatabase()
         return false;
     }
     query.exec("ALTER TABLE orders ADD COLUMN rating INTEGER DEFAULT 0");
+    query.exec("ALTER TABLE orders ADD COLUMN comment TEXT");
     
     // Order items table
     if (!query.exec("CREATE TABLE IF NOT EXISTS order_items ("
@@ -925,12 +929,14 @@ QJsonArray HttpServer::getOrders(const QString &userId, const QString &userType)
             order["createdAt"] = query.value(4).toString();
             // Fetch rating
             QSqlQuery ratingQuery;
-            ratingQuery.prepare("SELECT rating FROM orders WHERE id = ?");
+            ratingQuery.prepare("SELECT rating, comment FROM orders WHERE id = ?");
             ratingQuery.addBindValue(query.value(0).toInt());
             if (ratingQuery.exec() && ratingQuery.next()) {
                 order["rating"] = ratingQuery.value(0).toInt();
+                order["comment"] = ratingQuery.value(1).toString();
             } else {
                 order["rating"] = 0;
+                order["comment"] = "";
             }
             orders.append(order);
             qInfo() << "[DEBUG] Found order:" << order;
@@ -1215,5 +1221,39 @@ void HttpServer::handleDeleteUser(QTcpSocket *socket, const QString &userId) {
         sendJsonResponse(socket, 200, QJsonObject{{"message", "User deleted successfully"}});
     } else {
         sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to delete user or not found"}});
+    }
+}
+
+void HttpServer::handleRateOrder(QTcpSocket *socket, const QString &orderId, const QString &body) {
+    qInfo() << "[RateOrder] Received body:" << body;
+    QJsonParseError error;
+    QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError) {
+        qWarning() << "[RateOrder] Invalid JSON error:" << error.errorString();
+        sendJsonResponse(socket, 400, QJsonObject{{"error", "Invalid JSON"}});
+        return;
+    }
+    QJsonObject req = doc.object();
+    qInfo() << "[RateOrder] Parsed JSON object:" << req;
+    int rating = req["rating"].toInt();
+    qInfo() << "[RateOrder] Extracted rating:" << rating;
+    QString comment = req.contains("comment") ? req["comment"].toString() : "";
+    qInfo() << "[RateOrder] Extracted comment:" << comment;
+    if (rating < 1 || rating > 5) {
+        qWarning() << "[RateOrder] Invalid rating value:" << rating;
+        sendJsonResponse(socket, 400, QJsonObject{{"error", "Rating must be between 1 and 5"}});
+        return;
+    }
+    QSqlQuery query;
+    query.prepare("UPDATE orders SET rating = ?, comment = ? WHERE id = ?");
+    query.addBindValue(rating);
+    query.addBindValue(comment);
+    query.addBindValue(orderId);
+    if (query.exec() && query.numRowsAffected() > 0) {
+        qInfo() << "[RateOrder] Order rated successfully for orderId:" << orderId;
+        sendJsonResponse(socket, 200, QJsonObject{{"message", "Order rated successfully"}});
+    } else {
+        qWarning() << "[RateOrder] Failed to rate order or not found. orderId:" << orderId << " SQL error:" << query.lastError().text();
+        sendJsonResponse(socket, 500, QJsonObject{{"error", "Failed to rate order or not found"}});
     }
 }
