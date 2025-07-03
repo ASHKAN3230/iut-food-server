@@ -113,6 +113,8 @@ void HttpServer::handleRequest(QTcpSocket *socket)
         handleGetPendingAuthRestaurants(socket);
     } else if (path == "/api/restaurants/auth-status" && method == "POST") {
         handleSetRestaurantAuthStatus(socket, body);
+    } else if (path == "/api/forgot-password" && method == "POST") {
+        handleForgotPassword(socket, body);
     } else {
         sendResponse(socket, 404, "text/plain", "404 Not Found");
     }
@@ -632,6 +634,23 @@ bool HttpServer::initializeDatabase()
                "created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
                ");");
     
+    // Ensure default admin/manager account exists
+    QSqlQuery adminCheckQuery;
+    adminCheckQuery.prepare("SELECT COUNT(*) FROM users WHERE username = ? AND user_type = 'manager'");
+    adminCheckQuery.addBindValue("admin");
+    if (adminCheckQuery.exec() && adminCheckQuery.next() && adminCheckQuery.value(0).toInt() == 0) {
+        QSqlQuery insertAdminQuery;
+        insertAdminQuery.prepare("INSERT INTO users (username, password, user_type) VALUES (?, ?, ?)");
+        insertAdminQuery.addBindValue("admin");
+        insertAdminQuery.addBindValue("admin");
+        insertAdminQuery.addBindValue("manager");
+        if (insertAdminQuery.exec()) {
+            qInfo() << "Default admin/manager account created: username='admin', password='admin123'";
+        } else {
+            qWarning() << "Failed to create default admin/manager account:" << insertAdminQuery.lastError().text();
+        }
+    }
+    
     // Insert sample data if tables are empty
     QSqlQuery checkQuery("SELECT COUNT(*) FROM restaurants");
     if (checkQuery.exec() && checkQuery.next() && checkQuery.value(0).toInt() == 0) {
@@ -1107,4 +1126,44 @@ void HttpServer::handleSetRestaurantAuthStatus(QTcpSocket *socket, const QString
         del.exec();
         sendJsonResponse(socket, 200, QJsonObject{{"message", "Application denied"}});
     }
+}
+
+void HttpServer::handleForgotPassword(QTcpSocket *socket, const QString &body) {
+    QJsonParseError error;
+    QJsonDocument doc = QJsonDocument::fromJson(body.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError) {
+        qInfo() << "[ForgotPassword] Invalid JSON received";
+        sendJsonResponse(socket, 400, QJsonObject{{"error", "Invalid JSON"}});
+        return;
+    }
+    QJsonObject request = doc.object();
+    QString username = request["username"].toString();
+    QString password = request["password"].toString();
+    qInfo() << "[ForgotPassword] Attempt for username:" << username;
+    if (username.isEmpty() || password.isEmpty()) {
+        qInfo() << "[ForgotPassword] Username or password is empty";
+        sendJsonResponse(socket, 400, QJsonObject{{"error", "Username and password are required"}});
+        return;
+    }
+    if (updateUserPassword(username, password)) {
+        qInfo() << "[ForgotPassword] Password updated for username:" << username;
+        sendJsonResponse(socket, 200, QJsonObject{{"message", "Password updated successfully"}});
+    } else {
+        qInfo() << "[ForgotPassword] Failed to update password for username:" << username;
+        sendJsonResponse(socket, 400, QJsonObject{{"error", "Failed to update password (user may not exist)"}});
+    }
+}
+
+bool HttpServer::updateUserPassword(const QString &username, const QString &newPassword) {
+    QSqlQuery query;
+    query.prepare("UPDATE users SET password = ? WHERE username = ?");
+    query.addBindValue(newPassword);
+    query.addBindValue(username);
+    bool ok = query.exec();
+    qInfo() << "[ForgotPassword] SQL exec for username:" << username << "ok?" << ok << "rows affected:" << query.numRowsAffected();
+    if (!ok) {
+        qWarning() << "[ForgotPassword] Failed to update password for" << username << ":" << query.lastError().text();
+        return false;
+    }
+    return query.numRowsAffected() > 0;
 }
